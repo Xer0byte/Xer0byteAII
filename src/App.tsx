@@ -1,11 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, MessageSquare, Mic, Image as ImageIcon, Folder, Clock, Settings, X, Plus, Send, Book } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-
-const apiKey = process.env.GEMINI_API_KEY || 'missing_api_key';
-const ai = new GoogleGenAI({ apiKey });
 
 const ParticleBackground = ({ theme }: { theme: 'dark' | 'light' }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -129,18 +125,19 @@ export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [view, setView] = useState<'home' | 'chat' | 'history' | 'imagine' | 'voice' | 'projects' | 'grokpedia'>('home');
   const [messages, setMessages] = useState<{id?: number, role: 'user' | 'ai', text: string}[]>([]);
-  const [conversations, setConversations] = useState<{id: number, title: string, updated_at: string}[]>([]);
-  const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
+  const [conversations, setConversations] = useState<{id: string, title: string, updated_at: string}[]>([]);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [isFetching, setIsFetching] = useState(true);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   
-  const [projects, setProjects] = useState<{id: number, name: string, description: string, content: string}[]>([]);
-  const [tasks, setTasks] = useState<{id: number, title: string, completed: boolean}[]>([]);
+  const [projects, setProjects] = useState<{id: string, name: string, description: string, content: string}[]>([]);
+  const [tasks, setTasks] = useState<{id: string, title: string, completed: boolean}[]>([]);
   
-  const [user, setUser] = useState<{id: number, name: string, email: string, avatarColor: string} | null>(null);
+  const [user, setUser] = useState<{id: string, name: string, email: string, avatarColor: string} | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [authError, setAuthError] = useState('');
   
@@ -184,24 +181,36 @@ export default function App() {
 
   useEffect(() => {
     const storedUser = localStorage.getItem('grokUser');
-    if (storedUser) {
+    const storedToken = localStorage.getItem('grokToken');
+    if (storedUser && storedToken) {
       try {
         setUser(JSON.parse(storedUser));
+        setToken(storedToken);
       } catch (e) {
         console.error('Failed to parse stored user', e);
         localStorage.removeItem('grokUser');
+        localStorage.removeItem('grokToken');
       }
     }
   }, []);
 
+  const apiFetch = async (url: string, options: any = {}) => {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...options.headers
+    };
+    return fetch(url, { ...options, headers });
+  };
+
   useEffect(() => {
     const fetchConversations = async () => {
-      if (!user) {
+      if (!user || !token) {
         setConversations([]);
         return;
       }
       try {
-        const res = await fetch(`/api/conversations?userId=${user.id}`);
+        const res = await apiFetch('/api/conversations');
         if (res.ok) {
           const data = await res.json();
           setConversations(data);
@@ -214,42 +223,42 @@ export default function App() {
       }
     };
     fetchConversations();
-  }, [user]);
+  }, [user, token]);
 
   useEffect(() => {
     const fetchProjects = async () => {
-      if (!user) return;
+      if (!user || !token) return;
       try {
-        const res = await fetch(`/api/projects?userId=${user.id}`);
+        const res = await apiFetch('/api/projects');
         if (res.ok) setProjects(await res.json());
       } catch (error) {
         console.error("Failed to fetch projects:", error);
       }
     };
     const fetchTasks = async () => {
-      if (!user) return;
+      if (!user || !token) return;
       try {
-        const res = await fetch(`/api/tasks?userId=${user.id}`);
+        const res = await apiFetch('/api/tasks');
         if (res.ok) setTasks(await res.json());
       } catch (error) {
         console.error("Failed to fetch tasks:", error);
       }
     };
-    if (user) {
+    if (user && token) {
       fetchProjects();
       fetchTasks();
     }
-  }, [user]);
+  }, [user, token]);
 
   useEffect(() => {
     const fetchMessages = async () => {
-      if (!user || !currentConversationId) {
+      if (!user || !token || !currentConversationId) {
         setMessages([]);
         setIsFetching(false);
         return;
       }
       try {
-        const res = await fetch(`/api/messages?userId=${user.id}&conversationId=${currentConversationId}`);
+        const res = await apiFetch(`/api/messages?conversationId=${currentConversationId}`);
         if (res.ok) {
           const data = await res.json();
           setMessages(data);
@@ -261,18 +270,7 @@ export default function App() {
       }
     };
     fetchMessages();
-  }, [user, currentConversationId]);
-
-  const initChat = () => {
-    if (!chatRef.current) {
-      chatRef.current = ai.chats.create({
-        model: "gemini-2.5-flash",
-        config: {
-          systemInstruction: "You are Grok, a helpful, witty, and slightly rebellious AI assistant. You can speak Urdu/Hindi in roman script if the user talks to you in it. Keep your answers concise and helpful.",
-        }
-      });
-    }
-  };
+  }, [user, token, currentConversationId]);
 
   const handleSend = async (text: string = inputText) => {
     if (!text.trim()) return;
@@ -286,10 +284,9 @@ export default function App() {
     // Create new conversation if none exists
     if (!activeConvId && user) {
       try {
-        const res = await fetch('/api/conversations', {
+        const res = await apiFetch('/api/conversations', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: user.id, title: text.substring(0, 30) + "..." })
+          body: JSON.stringify({ title: text.substring(0, 30) + "..." })
         });
         const data = await res.json();
         activeConvId = data.id;
@@ -301,33 +298,27 @@ export default function App() {
     }
 
     const userMsg = { role: 'user' as const, text };
-    setMessages(prev => [...prev, userMsg]);
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
     setInputText('');
     setIsThinking(true);
 
     try {
-      // Save user message
-      if (user && activeConvId) {
-        await fetch('/api/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...userMsg, userId: user.id, conversationId: activeConvId })
-        });
-      }
-
-      initChat();
-      const response = await chatRef.current.sendMessage({ message: text });
+      const response = await apiFetch('/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          conversationId: activeConvId, 
+          text, 
+          history: messages 
+        })
+      });
       
-      const aiMsg = { role: 'ai' as const, text: response.text };
-      setMessages(prev => [...prev, aiMsg]);
-      
-      // Save AI message
-      if (user && activeConvId) {
-        await fetch('/api/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...aiMsg, userId: user.id, conversationId: activeConvId })
-        });
+      const data = await response.json();
+      if (response.ok) {
+        const aiMsg = { role: 'ai' as const, text: data.text };
+        setMessages(prev => [...prev, aiMsg]);
+      } else {
+        throw new Error(data.error || "Failed to get AI response");
       }
     } catch (error: any) {
       console.error("Chat error:", error);
@@ -342,18 +333,15 @@ export default function App() {
     setIsGeneratingImage(true);
     setGeneratedImage(null);
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: inputText,
+      const response = await apiFetch('/api/generate-image', {
+        method: 'POST',
+        body: JSON.stringify({ prompt: inputText })
       });
-      const parts = response.candidates?.[0]?.content?.parts;
-      if (parts) {
-        for (const part of parts) {
-          if (part.inlineData) {
-            setGeneratedImage(`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`);
-            break;
-          }
-        }
+      const data = await response.json();
+      if (response.ok) {
+        setGeneratedImage(data.imageUrl);
+      } else {
+        alert(data.error || "Failed to generate image.");
       }
     } catch (error) {
       console.error("Image generation error:", error);
@@ -373,7 +361,7 @@ export default function App() {
     if (!user) return;
     if (confirm("Are you sure you want to delete all conversations?")) {
       try {
-        await fetch(`/api/messages?userId=${user.id}`, { method: 'DELETE' });
+        await apiFetch('/api/messages', { method: 'DELETE' });
         setMessages([]);
         setConversations([]);
         setCurrentConversationId(null);
@@ -396,8 +384,10 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        setUser(data);
-        localStorage.setItem('grokUser', JSON.stringify(data));
+        setUser(data.user);
+        setToken(data.token);
+        localStorage.setItem('grokUser', JSON.stringify(data.user));
+        localStorage.setItem('grokToken', data.token);
         setModals(prev => ({ ...prev, signUp: false }));
         setAuthForm({ name: '', email: '', password: '' });
       } else {
@@ -408,7 +398,7 @@ export default function App() {
     }
   };
 
-  const handleSignIn = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
     try {
@@ -419,8 +409,10 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        setUser(data);
-        localStorage.setItem('grokUser', JSON.stringify(data));
+        setUser(data.user);
+        setToken(data.token);
+        localStorage.setItem('grokUser', JSON.stringify(data.user));
+        localStorage.setItem('grokToken', data.token);
         setModals(prev => ({ ...prev, signIn: false }));
         setAuthForm({ name: '', email: '', password: '' });
       } else {
@@ -433,7 +425,9 @@ export default function App() {
 
   const mockLogout = () => {
     setUser(null);
+    setToken(null);
     localStorage.removeItem('grokUser');
+    localStorage.removeItem('grokToken');
     setModals(prev => ({ ...prev, userMenu: false, manageAccount: false }));
     setView('home');
     setMessages([]);
@@ -447,10 +441,9 @@ export default function App() {
     e.preventDefault();
     if (!user) return;
     try {
-      const res = await fetch('/api/projects', {
+      const res = await apiFetch('/api/projects', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, ...projectForm })
+        body: JSON.stringify(projectForm)
       });
       if (res.ok) {
         const newProject = await res.json();
@@ -468,10 +461,9 @@ export default function App() {
     e.preventDefault();
     if (!user || !taskTitle.trim()) return;
     try {
-      const res = await fetch('/api/tasks', {
+      const res = await apiFetch('/api/tasks', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, title: taskTitle })
+        body: JSON.stringify({ title: taskTitle })
       });
       if (res.ok) {
         const newTask = await res.json();
@@ -483,11 +475,10 @@ export default function App() {
     }
   };
 
-  const handleToggleTask = async (taskId: number, completed: boolean) => {
+  const handleToggleTask = async (taskId: string, completed: boolean) => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}`, {
+      const res = await apiFetch(`/api/tasks/${taskId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed: !completed })
       });
       if (res.ok) {
@@ -1023,7 +1014,7 @@ export default function App() {
             <div className="p-6">
               {authError && <div className="mb-4 p-3 rounded-lg bg-red-500/20 text-red-500 text-sm">{authError}</div>}
               
-              <form onSubmit={modals.signIn ? handleSignIn : handleSignUp} className="space-y-4">
+              <form onSubmit={modals.signIn ? handleLogin : handleSignUp} className="space-y-4">
                 {modals.signUp && (
                   <div>
                     <label className="block text-sm font-medium mb-1 opacity-80">Name</label>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, MessageSquare, Mic, Image as ImageIcon, Folder, Clock, Settings, X, Plus, Send } from 'lucide-react';
+import { Search, MessageSquare, Mic, Image as ImageIcon, Folder, Clock, Settings, X, Plus, Send, Book } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -127,7 +127,7 @@ const ParticleBackground = ({ theme }: { theme: 'dark' | 'light' }) => {
 
 export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [view, setView] = useState<'home' | 'chat' | 'history' | 'imagine' | 'voice' | 'projects'>('home');
+  const [view, setView] = useState<'home' | 'chat' | 'history' | 'imagine' | 'voice' | 'projects' | 'grokpedia'>('home');
   const [messages, setMessages] = useState<{id?: number, role: 'user' | 'ai', text: string}[]>([]);
   const [conversations, setConversations] = useState<{id: number, title: string, updated_at: string}[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
@@ -136,6 +136,9 @@ export default function App() {
   const [isFetching, setIsFetching] = useState(true);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  
+  const [projects, setProjects] = useState<{id: number, name: string, description: string, content: string}[]>([]);
+  const [tasks, setTasks] = useState<{id: number, title: string, completed: boolean}[]>([]);
   
   const [user, setUser] = useState<{id: number, name: string, email: string, avatarColor: string} | null>(null);
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
@@ -146,7 +149,9 @@ export default function App() {
     signUp: false,
     settings: false,
     manageAccount: false,
-    userMenu: false
+    userMenu: false,
+    tasks: false,
+    createProject: false
   });
 
   const [settings, setSettingsState] = useState({
@@ -209,6 +214,31 @@ export default function App() {
       }
     };
     fetchConversations();
+  }, [user]);
+
+  useEffect(() => {
+    const fetchProjects = async () => {
+      if (!user) return;
+      try {
+        const res = await fetch(`/api/projects?userId=${user.id}`);
+        if (res.ok) setProjects(await res.json());
+      } catch (error) {
+        console.error("Failed to fetch projects:", error);
+      }
+    };
+    const fetchTasks = async () => {
+      if (!user) return;
+      try {
+        const res = await fetch(`/api/tasks?userId=${user.id}`);
+        if (res.ok) setTasks(await res.json());
+      } catch (error) {
+        console.error("Failed to fetch tasks:", error);
+      }
+    };
+    if (user) {
+      fetchProjects();
+      fetchTasks();
+    }
   }, [user]);
 
   useEffect(() => {
@@ -412,6 +442,62 @@ export default function App() {
     chatRef.current = null;
   };
 
+  const [projectForm, setProjectForm] = useState({ name: '', description: '', content: '' });
+  const handleCreateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, ...projectForm })
+      });
+      if (res.ok) {
+        const newProject = await res.json();
+        setProjects(prev => [newProject, ...prev]);
+        setModals(prev => ({ ...prev, createProject: false }));
+        setProjectForm({ name: '', description: '', content: '' });
+      }
+    } catch (error) {
+      console.error("Failed to create project:", error);
+    }
+  };
+
+  const [taskTitle, setTaskTitle] = useState('');
+  const handleCreateTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !taskTitle.trim()) return;
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, title: taskTitle })
+      });
+      if (res.ok) {
+        const newTask = await res.json();
+        setTasks(prev => [newTask, ...prev]);
+        setTaskTitle('');
+      }
+    } catch (error) {
+      console.error("Failed to create task:", error);
+    }
+  };
+
+  const handleToggleTask = async (taskId: number, completed: boolean) => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: !completed })
+      });
+      if (res.ok) {
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, completed: !completed } : t));
+      }
+    } catch (error) {
+      console.error("Failed to toggle task:", error);
+    }
+  };
+
   return (
     <div className={`flex h-screen relative overflow-hidden transition-colors duration-300 ${theme === 'dark' ? 'bg-black text-white' : 'bg-[#f0f0f0] text-black'}`}>
       <ParticleBackground theme={theme} />
@@ -444,6 +530,10 @@ export default function App() {
           <div onClick={() => setView('history')} className={`flex items-center gap-4 p-3 rounded-xl cursor-pointer text-[15px] transition-all ${view === 'history' ? (theme === 'dark' ? 'bg-[#1f1f1f] text-white' : 'bg-[#e0e0e0] text-black') : (theme === 'dark' ? 'text-[#ddd] hover:bg-[#1f1f1f] hover:text-white' : 'text-[#333] hover:bg-[#e0e0e0] hover:text-black')}`}>
             <Clock size={20} />
             <span>History</span>
+          </div>
+          <div onClick={() => setView('grokpedia')} className={`flex items-center gap-4 p-3 rounded-xl cursor-pointer text-[15px] transition-all ${view === 'grokpedia' ? (theme === 'dark' ? 'bg-[#1f1f1f] text-white' : 'bg-[#e0e0e0] text-black') : (theme === 'dark' ? 'text-[#ddd] hover:bg-[#1f1f1f] hover:text-white' : 'text-[#333] hover:bg-[#e0e0e0] hover:text-black')}`}>
+            <Book size={20} />
+            <span>Grokpedia</span>
           </div>
         </div>
       </aside>
@@ -655,13 +745,61 @@ export default function App() {
         )}
 
         {view === 'projects' && (
+          <div className="w-full max-w-4xl mx-auto p-8 h-full overflow-y-auto">
+            <div className="flex justify-between items-center mb-8">
+              <h2 className="text-3xl font-bold">Projects</h2>
+              <button 
+                onClick={() => setModals({...modals, createProject: true})}
+                className={`px-4 py-2 rounded-xl font-medium flex items-center gap-2 ${theme === 'dark' ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800'}`}
+              >
+                <Plus size={18} />
+                New Project
+              </button>
+            </div>
+            
+            {projects.length === 0 ? (
+              <div className="flex flex-col items-center justify-center mt-20 opacity-50">
+                <Folder size={64} className="mb-6" />
+                <p className="text-lg text-center max-w-md">Your saved code snippets, documents, and artifacts will appear here.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {projects.map(project => (
+                  <div 
+                    key={project.id}
+                    className={`p-6 rounded-2xl border transition-all ${theme === 'dark' ? 'bg-[#161616] border-[#2a2a2a] hover:border-[#555]' : 'bg-white border-[#ddd] hover:border-[#999]'}`}
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <Folder size={20} className="text-[#00ff9d]" />
+                      <h3 className="font-bold text-lg">{project.name}</h3>
+                    </div>
+                    <p className={`text-sm mb-4 line-clamp-2 ${theme === 'dark' ? 'text-[#aaa]' : 'text-[#666]'}`}>{project.description}</p>
+                    <div className="flex justify-end">
+                      <button className={`text-sm font-medium ${theme === 'dark' ? 'text-[#00ff9d]' : 'text-[#006633]'}`}>View Details</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === 'grokpedia' && (
           <div className="w-full max-w-4xl mx-auto p-8 h-full flex flex-col items-center justify-center">
-            <Folder size={64} className="mb-6 opacity-50" />
-            <h2 className="text-3xl font-bold mb-4">Projects</h2>
-            <p className="text-lg opacity-70 text-center max-w-md mb-8">Your saved code snippets, documents, and artifacts will appear here.</p>
-            <button onClick={() => setView('chat')} className={`px-6 py-3 rounded-xl font-medium ${theme === 'dark' ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800'}`}>
-              Start a new chat
-            </button>
+            <Book size={64} className="mb-6 opacity-50" />
+            <h2 className="text-3xl font-bold mb-4">Grokpedia</h2>
+            <p className="text-lg opacity-70 text-center max-w-md mb-8">The ultimate source of knowledge, curated by Grok.</p>
+            <div className={`flex items-center rounded-full p-1.5 h-16 border transition-all w-full max-w-2xl ${theme === 'dark' ? 'bg-[#161616] border-[#2a2a2a] focus-within:border-[#555] focus-within:ring-4 focus-within:ring-white/10' : 'bg-[#f5f5f5] border-[#ddd] focus-within:border-[#999] focus-within:ring-4 focus-within:ring-black/10'}`}>
+              <div className="pl-4 pr-2 text-[#666]">
+                <Search size={20} />
+              </div>
+              <input 
+                type="text" 
+                placeholder="Search Grokpedia..."
+                onKeyDown={e => e.key === 'Enter' && handleSend((e.target as HTMLInputElement).value)}
+                className={`flex-1 bg-transparent border-none outline-none text-[17px] px-2 ${theme === 'dark' ? 'text-white placeholder-[#666]' : 'text-black placeholder-[#999]'}`}
+              />
+            </div>
           </div>
         )}
 
@@ -680,7 +818,7 @@ export default function App() {
             {modals.userMenu && (
               <div className={`absolute bottom-14 left-0 w-48 rounded-xl border shadow-2xl py-2 ${theme === 'dark' ? 'bg-[#111] border-[#333] text-white' : 'bg-[#f5f5f5] border-[#ddd] text-black'}`}>
                 <div className={`px-4 py-2 cursor-pointer hover:bg-black/10 ${theme === 'dark' ? 'hover:bg-white/10' : ''}`} onClick={() => { setModals({...modals, userMenu: false, settings: true}); }}>Settings</div>
-                <div className={`px-4 py-2 cursor-pointer hover:bg-black/10 ${theme === 'dark' ? 'hover:bg-white/10' : ''}`}>Tasks</div>
+                <div className={`px-4 py-2 cursor-pointer hover:bg-black/10 ${theme === 'dark' ? 'hover:bg-white/10' : ''}`} onClick={() => { setModals({...modals, userMenu: false, tasks: true}); }}>Tasks</div>
                 <div className={`px-4 py-2 cursor-pointer hover:bg-black/10 ${theme === 'dark' ? 'hover:bg-white/10' : ''}`}>Files</div>
                 <div className={`px-4 py-2 cursor-pointer hover:bg-black/10 ${theme === 'dark' ? 'hover:bg-white/10' : ''}`}>Grokpedia</div>
                 <div className={`px-4 py-2 cursor-pointer hover:bg-black/10 ${theme === 'dark' ? 'hover:bg-white/10' : ''}`}>Help</div>
@@ -701,6 +839,94 @@ export default function App() {
       
       {/* Modals */}
       
+      {/* Tasks Modal */}
+      {modals.tasks && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setModals({...modals, tasks: false}) }}>
+          <div className={`w-[90%] max-w-[500px] max-h-[80vh] flex flex-col rounded-2xl border shadow-2xl ${theme === 'dark' ? 'bg-[#111] border-[#333] text-white' : 'bg-[#f5f5f5] border-[#ddd] text-black'}`}>
+            <div className={`flex justify-between items-center p-4 px-6 border-b ${theme === 'dark' ? 'border-[#333]' : 'border-[#ddd]'}`}>
+              <h2 className="text-xl font-semibold">Tasks</h2>
+              <button onClick={() => setModals({...modals, tasks: false})} className="hover:opacity-70"><X size={24} /></button>
+            </div>
+            <div className="p-6 flex-1 overflow-y-auto">
+              <form onSubmit={handleCreateTask} className="mb-6 flex gap-2">
+                <input 
+                  type="text" 
+                  value={taskTitle}
+                  onChange={e => setTaskTitle(e.target.value)}
+                  placeholder="What needs to be done?"
+                  className={`flex-1 px-4 py-2 rounded-xl border outline-none transition-all ${theme === 'dark' ? 'bg-[#161616] border-[#333] focus:border-[#00ff9d]' : 'bg-white border-[#ddd] focus:border-black'}`}
+                />
+                <button type="submit" className={`p-2 rounded-xl ${theme === 'dark' ? 'bg-[#00ff9d] text-black' : 'bg-black text-white'}`}>
+                  <Plus size={20} />
+                </button>
+              </form>
+              <div className="space-y-3">
+                {tasks.length === 0 ? (
+                  <div className="text-center opacity-50 py-10">No tasks yet.</div>
+                ) : (
+                  tasks.map(task => (
+                    <div key={task.id} className={`flex items-center gap-3 p-3 rounded-xl border ${theme === 'dark' ? 'bg-[#161616] border-[#222]' : 'bg-white border-[#eee]'}`}>
+                      <input 
+                        type="checkbox" 
+                        checked={task.completed} 
+                        onChange={() => handleToggleTask(task.id, task.completed)}
+                        className="w-5 h-5 accent-[#00ff9d]"
+                      />
+                      <span className={`flex-1 ${task.completed ? 'line-through opacity-50' : ''}`}>{task.title}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Project Modal */}
+      {modals.createProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setModals({...modals, createProject: false}) }}>
+          <div className={`w-[90%] max-w-[600px] rounded-2xl border shadow-2xl ${theme === 'dark' ? 'bg-[#111] border-[#333] text-white' : 'bg-[#f5f5f5] border-[#ddd] text-black'}`}>
+            <div className={`flex justify-between items-center p-4 px-6 border-b ${theme === 'dark' ? 'border-[#333]' : 'border-[#ddd]'}`}>
+              <h2 className="text-xl font-semibold">New Project</h2>
+              <button onClick={() => setModals({...modals, createProject: false})} className="hover:opacity-70"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleCreateProject} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1 opacity-70">Project Name</label>
+                <input 
+                  required
+                  type="text" 
+                  value={projectForm.name}
+                  onChange={e => setProjectForm({...projectForm, name: e.target.value})}
+                  className={`w-full px-4 py-2 rounded-xl border outline-none transition-all ${theme === 'dark' ? 'bg-[#161616] border-[#333] focus:border-[#00ff9d]' : 'bg-white border-[#ddd] focus:border-black'}`}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1 opacity-70">Description</label>
+                <input 
+                  type="text" 
+                  value={projectForm.description}
+                  onChange={e => setProjectForm({...projectForm, description: e.target.value})}
+                  className={`w-full px-4 py-2 rounded-xl border outline-none transition-all ${theme === 'dark' ? 'bg-[#161616] border-[#333] focus:border-[#00ff9d]' : 'bg-white border-[#ddd] focus:border-black'}`}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1 opacity-70">Content / Code</label>
+                <textarea 
+                  rows={6}
+                  value={projectForm.content}
+                  onChange={e => setProjectForm({...projectForm, content: e.target.value})}
+                  className={`w-full px-4 py-2 rounded-xl border outline-none transition-all font-mono text-sm ${theme === 'dark' ? 'bg-[#161616] border-[#333] focus:border-[#00ff9d]' : 'bg-white border-[#ddd] focus:border-black'}`}
+                />
+              </div>
+              <button type="submit" className={`w-full py-3 rounded-xl font-bold transition-all ${theme === 'dark' ? 'bg-[#00ff9d] text-black hover:bg-[#00cc7e]' : 'bg-black text-white hover:bg-gray-800'}`}>
+                Create Project
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Settings Modal */}
       {modals.settings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setModals({...modals, settings: false}) }}>

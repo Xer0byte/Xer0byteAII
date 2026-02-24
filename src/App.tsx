@@ -133,6 +133,11 @@ export default function App() {
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   
+  const [selectedFile, setSelectedFile] = useState<{data: string, mimeType: string} | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  
   const [projects, setProjects] = useState<{id: string, name: string, description: string, content: string}[]>([]);
   const [tasks, setTasks] = useState<{id: string, title: string, completed: boolean}[]>([]);
   
@@ -273,7 +278,7 @@ export default function App() {
   }, [user, token, currentConversationId]);
 
   const handleSend = async (text: string = inputText) => {
-    if (!text.trim()) return;
+    if (!text.trim() && !selectedFile) return;
     
     if (view !== 'chat') {
       setView('chat');
@@ -286,7 +291,7 @@ export default function App() {
       try {
         const res = await apiFetch('/api/conversations', {
           method: 'POST',
-          body: JSON.stringify({ title: text.substring(0, 30) + "..." })
+          body: JSON.stringify({ title: text ? text.substring(0, 30) + "..." : "Image Upload" })
         });
         const data = await res.json();
         activeConvId = data.id;
@@ -297,10 +302,12 @@ export default function App() {
       }
     }
 
-    const userMsg = { role: 'user' as const, text };
+    const userMsg = { role: 'user' as const, text: text || "[Image attached]" };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInputText('');
+    const currentFile = selectedFile;
+    setSelectedFile(null);
     setIsThinking(true);
 
     try {
@@ -309,9 +316,11 @@ export default function App() {
         body: JSON.stringify({ 
           conversationId: activeConvId, 
           text, 
-          history: messages 
+          history: messages,
+          image: currentFile
         })
       });
+
       
       const data = await response.json();
       if (response.ok) {
@@ -489,15 +498,52 @@ export default function App() {
     }
   };
 
+  const startListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser.");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInputText(transcript);
+      handleSend(transcript);
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.start();
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setSelectedFile({
+        data: base64.split(',')[1],
+        mimeType: file.type
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className={`flex h-screen relative overflow-hidden transition-colors duration-300 ${theme === 'dark' ? 'bg-black text-white' : 'bg-[#f0f0f0] text-black'}`}>
       <ParticleBackground theme={theme} />
       
       {/* Sidebar */}
       <aside className={`w-[280px] flex flex-col p-4 z-10 border-r backdrop-blur-md ${theme === 'dark' ? 'bg-black/94 border-[#222]' : 'bg-white/94 border-[#ddd]'}`}>
-        <div className={`flex items-center gap-3 p-3 rounded-xl text-sm cursor-pointer transition-all ${theme === 'dark' ? 'bg-[#161616] text-[#888] hover:bg-[#222] hover:text-white' : 'bg-[#f5f5f5] text-[#555] hover:bg-[#e0e0e0] hover:text-black'}`}>
+        <div className={`flex items-center gap-3 p-3 rounded-xl text-sm transition-all ${theme === 'dark' ? 'bg-[#161616] text-[#888] focus-within:bg-[#222] focus-within:text-white' : 'bg-[#f5f5f5] text-[#555] focus-within:bg-[#e0e0e0] focus-within:text-black'}`}>
           <Search size={18} />
-          <span>Search</span>
+          <input 
+            type="text" 
+            placeholder="Search..." 
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="bg-transparent border-none outline-none w-full"
+          />
           <span className="ml-auto text-xs opacity-50">Ctrl+K</span>
         </div>
         
@@ -548,25 +594,26 @@ export default function App() {
             
             <div className="w-full max-w-3xl mx-auto mb-10">
               <div className={`flex items-center rounded-full p-1.5 h-16 border transition-all ${theme === 'dark' ? 'bg-[#161616] border-[#2a2a2a] focus-within:border-[#555] focus-within:ring-4 focus-within:ring-white/10' : 'bg-[#f5f5f5] border-[#ddd] focus-within:border-[#999] focus-within:ring-4 focus-within:ring-black/10'}`}>
-                <div onClick={handleNewChat} className="pl-4 pr-2 text-[#666] cursor-pointer hover:text-white transition-colors">
+                <div onClick={() => fileInputRef.current?.click()} className="pl-4 pr-2 text-[#666] cursor-pointer hover:text-white transition-colors">
                   <Plus size={20} />
                 </div>
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="image/*" />
                 <input 
                   type="text" 
                   value={inputText}
                   onChange={e => setInputText(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleSend()}
-                  placeholder="What's on your mind?"
+                  placeholder={selectedFile ? "Image attached. Add a message..." : "What's on your mind?"}
                   className={`flex-1 bg-transparent border-none outline-none text-[17px] px-2 ${theme === 'dark' ? 'text-white placeholder-[#666]' : 'text-black placeholder-[#999]'}`}
                 />
                 <div className="flex items-center gap-2 pr-2">
-                  <button onClick={() => setView('voice')} className={`p-2 rounded-full ${theme === 'dark' ? 'hover:bg-[#333]' : 'hover:bg-[#ddd]'}`}>
+                  <button onClick={() => { setView('voice'); startListening(); }} className={`p-2 rounded-full ${theme === 'dark' ? 'hover:bg-[#333]' : 'hover:bg-[#ddd]'}`}>
                     <Mic size={20} />
                   </button>
                   <button 
                     onClick={() => handleSend()}
-                    disabled={!inputText.trim()}
-                    className={`p-2 rounded-full flex items-center justify-center transition-colors ${inputText.trim() ? (theme === 'dark' ? 'bg-white text-black' : 'bg-black text-white') : (theme === 'dark' ? 'bg-[#333] text-[#666]' : 'bg-[#ddd] text-[#999]')}`}
+                    disabled={!inputText.trim() && !selectedFile}
+                    className={`p-2 rounded-full flex items-center justify-center transition-colors ${inputText.trim() || selectedFile ? (theme === 'dark' ? 'bg-white text-black' : 'bg-black text-white') : (theme === 'dark' ? 'bg-[#333] text-[#666]' : 'bg-[#ddd] text-[#999]')}`}
                   >
                     <Send size={18} />
                   </button>
@@ -619,25 +666,26 @@ export default function App() {
             
             <div className={`absolute bottom-0 left-0 right-0 p-6 pt-10 bg-gradient-to-t ${theme === 'dark' ? 'from-black via-black/90 to-transparent' : 'from-[#f0f0f0] via-[#f0f0f0]/90 to-transparent'}`}>
               <div className={`flex items-center rounded-full p-1.5 h-16 border transition-all w-full max-w-3xl mx-auto ${theme === 'dark' ? 'bg-[#161616] border-[#2a2a2a] focus-within:border-[#555] focus-within:ring-4 focus-within:ring-white/10' : 'bg-[#f5f5f5] border-[#ddd] focus-within:border-[#999] focus-within:ring-4 focus-within:ring-black/10'}`}>
-                <div onClick={handleNewChat} className="pl-4 pr-2 text-[#666] cursor-pointer hover:text-white transition-colors">
+                <div onClick={() => fileInputRef.current?.click()} className="pl-4 pr-2 text-[#666] cursor-pointer hover:text-white transition-colors">
                   <Plus size={20} />
                 </div>
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="image/*" />
                 <input 
                   type="text" 
                   value={inputText}
                   onChange={e => setInputText(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleSend()}
-                  placeholder="What's on your mind?"
+                  placeholder={selectedFile ? "Image attached. Add a message..." : "What's on your mind?"}
                   className={`flex-1 bg-transparent border-none outline-none text-[17px] px-2 ${theme === 'dark' ? 'text-white placeholder-[#666]' : 'text-black placeholder-[#999]'}`}
                 />
                 <div className="flex items-center gap-2 pr-2">
-                  <button onClick={() => setView('voice')} className={`p-2 rounded-full ${theme === 'dark' ? 'hover:bg-[#333]' : 'hover:bg-[#ddd]'}`}>
+                  <button onClick={() => { setView('voice'); startListening(); }} className={`p-2 rounded-full ${theme === 'dark' ? 'hover:bg-[#333]' : 'hover:bg-[#ddd]'}`}>
                     <Mic size={20} />
                   </button>
                   <button 
                     onClick={() => handleSend()}
-                    disabled={!inputText.trim() || isThinking}
-                    className={`p-2 rounded-full flex items-center justify-center transition-colors ${inputText.trim() && !isThinking ? (theme === 'dark' ? 'bg-white text-black' : 'bg-black text-white') : (theme === 'dark' ? 'bg-[#333] text-[#666]' : 'bg-[#ddd] text-[#999]')}`}
+                    disabled={(!inputText.trim() && !selectedFile) || isThinking}
+                    className={`p-2 rounded-full flex items-center justify-center transition-colors ${(inputText.trim() || selectedFile) && !isThinking ? (theme === 'dark' ? 'bg-white text-black' : 'bg-black text-white') : (theme === 'dark' ? 'bg-[#333] text-[#666]' : 'bg-[#ddd] text-[#999]')}`}
                   >
                     <Send size={18} />
                   </button>
@@ -650,11 +698,11 @@ export default function App() {
         {view === 'history' && (
           <div className="w-full max-w-4xl mx-auto p-8 h-full overflow-y-auto">
             <h2 className="text-3xl font-bold mb-8">History</h2>
-            {conversations.length === 0 ? (
+            {conversations.filter(c => c.title.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 ? (
               <div className="text-center opacity-50 mt-20">No past conversations found.</div>
             ) : (
               <div className="space-y-4">
-                {conversations.map(conv => (
+                {conversations.filter(c => c.title.toLowerCase().includes(searchQuery.toLowerCase())).map(conv => (
                   <div 
                     key={conv.id} 
                     onClick={() => { setCurrentConversationId(conv.id); setView('chat'); }}
@@ -721,15 +769,21 @@ export default function App() {
         {view === 'voice' && (
           <div className="w-full max-w-4xl mx-auto p-8 h-full flex flex-col items-center justify-center">
             <div className="relative w-48 h-48 mb-12 flex items-center justify-center">
-              <div className="absolute inset-0 bg-[#00ff9d]/20 rounded-full animate-ping" style={{ animationDuration: '3s' }}></div>
-              <div className="absolute inset-4 bg-[#00ff9d]/40 rounded-full animate-ping" style={{ animationDuration: '2s' }}></div>
-              <div className="relative w-24 h-24 bg-[#00ff9d] rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(0,255,157,0.5)] cursor-pointer hover:scale-105 transition-transform">
+              {isListening && (
+                <>
+                  <div className="absolute inset-0 bg-[#00ff9d]/20 rounded-full animate-ping" style={{ animationDuration: '3s' }}></div>
+                  <div className="absolute inset-4 bg-[#00ff9d]/40 rounded-full animate-ping" style={{ animationDuration: '2s' }}></div>
+                </>
+              )}
+              <div onClick={isListening ? () => {} : startListening} className={`relative w-24 h-24 rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(0,255,157,0.5)] cursor-pointer hover:scale-105 transition-transform ${isListening ? 'bg-[#ff4444]' : 'bg-[#00ff9d]'}`}>
                 <Mic size={40} className="text-black" />
               </div>
             </div>
-            <h2 className="text-3xl font-bold mb-4">Listening...</h2>
-            <p className="text-lg opacity-70 text-center max-w-md">Speak your mind. Grok is listening and ready to respond.</p>
-            <button onClick={() => setView('chat')} className="mt-12 px-6 py-3 rounded-xl border border-[#444] hover:bg-[#222] transition-colors">
+            <h2 className="text-3xl font-bold mb-4">{isListening ? 'Listening...' : 'Tap to speak'}</h2>
+            <p className="text-lg opacity-70 text-center max-w-md">
+              {inputText || "Speak your mind. Grok is listening and ready to respond."}
+            </p>
+            <button onClick={() => { setView('chat'); setIsListening(false); }} className={`mt-12 px-6 py-3 rounded-xl border transition-colors ${theme === 'dark' ? 'border-[#444] hover:bg-[#222]' : 'border-[#ccc] hover:bg-[#e0e0e0]'}`}>
               Cancel
             </button>
           </div>
@@ -1054,6 +1108,24 @@ export default function App() {
                   {modals.signIn ? 'Sign In' : 'Sign Up'}
                 </button>
               </form>
+
+              <div className="mt-6 flex items-center gap-4">
+                <div className={`flex-1 h-px ${theme === 'dark' ? 'bg-[#333]' : 'bg-[#ddd]'}`}></div>
+                <div className="text-sm opacity-50">or continue with</div>
+                <div className={`flex-1 h-px ${theme === 'dark' ? 'bg-[#333]' : 'bg-[#ddd]'}`}></div>
+              </div>
+
+              <div className="flex gap-2 mt-6">
+                <button type="button" onClick={() => alert('Google OAuth requires configuration')} className={`flex-1 py-2 rounded-xl border flex items-center justify-center gap-2 transition-colors ${theme === 'dark' ? 'border-[#444] hover:bg-[#222]' : 'border-[#ccc] hover:bg-[#e0e0e0]'}`}>
+                  <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                </button>
+                <button type="button" onClick={() => alert('Apple OAuth requires configuration')} className={`flex-1 py-2 rounded-xl border flex items-center justify-center gap-2 transition-colors ${theme === 'dark' ? 'border-[#444] hover:bg-[#222]' : 'border-[#ccc] hover:bg-[#e0e0e0]'}`}>
+                  <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.15 2.95.97 3.83 2.32-3.43 2.14-2.81 7.02.63 8.46-.78 1.83-1.72 3.35-3.11 4.23zM12.03 7.25c-.15-3.47 3.2-6.32 6.19-6.25.26 3.65-3.66 6.55-6.19 6.25z"/></svg>
+                </button>
+                <button type="button" onClick={() => alert('Twitter OAuth requires configuration')} className={`flex-1 py-2 rounded-xl border flex items-center justify-center gap-2 transition-colors ${theme === 'dark' ? 'border-[#444] hover:bg-[#222]' : 'border-[#ccc] hover:bg-[#e0e0e0]'}`}>
+                  <svg width="18" height="18" viewBox="0 0 24 24"><path fill="currentColor" d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.827 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-7.496 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z"/></svg>
+                </button>
+              </div>
               
               <div className="mt-6 text-center text-sm opacity-70">
                 {modals.signIn ? (

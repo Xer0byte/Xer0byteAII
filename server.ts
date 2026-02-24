@@ -7,19 +7,30 @@ import cors from "cors";
 import path from "path";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
+import { MongoMemoryServer } from 'mongodb-memory-server';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/grok-clone";
+const MONGODB_URI = process.env.MONGODB_URI || "";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // MongoDB Connection
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log("Connected to MongoDB Atlas"))
-  .catch(err => console.error("MongoDB connection error:", err));
+async function connectDB() {
+  let uri = MONGODB_URI;
+  if (!uri || !uri.startsWith('mongodb')) {
+    console.log("MONGODB_URI not provided or invalid. Starting in-memory MongoDB for preview...");
+    const mongoServer = await MongoMemoryServer.create();
+    uri = mongoServer.getUri();
+  }
+  
+  mongoose.connect(uri)
+    .then(() => console.log("Connected to MongoDB"))
+    .catch(err => console.error("MongoDB connection error:", err));
+}
+connectDB();
 
 // Schemas
 const userSchema = new mongoose.Schema({
@@ -134,13 +145,13 @@ app.post("/api/auth/login", async (req, res) => {
 // Chat Route
 app.post("/api/chat", authenticateToken, async (req: any, res) => {
   try {
-    const { conversationId, text, history } = req.body;
+    const { conversationId, text, history, image } = req.body;
     const userId = req.user.id;
 
-    if (!text) return res.status(400).json({ error: "Message text is required" });
+    if (!text && !image) return res.status(400).json({ error: "Message text or image is required" });
 
     // Save user message
-    const userMsg = new Message({ conversationId, userId, role: 'user', text });
+    const userMsg = new Message({ conversationId, userId, role: 'user', text: text || "[Image attached]" });
     await userMsg.save();
 
     // Update conversation timestamp
@@ -153,7 +164,19 @@ app.post("/api/chat", authenticateToken, async (req: any, res) => {
     }));
 
     const chat = chatModel.startChat({ history: chatHistory });
-    const result = await chat.sendMessage(text);
+    
+    const parts: any[] = [];
+    if (text) parts.push({ text });
+    if (image) {
+      parts.push({
+        inlineData: {
+          data: image.data,
+          mimeType: image.mimeType
+        }
+      });
+    }
+
+    const result = await chat.sendMessage(parts);
     const aiText = result.response.text();
 
     // Save AI message

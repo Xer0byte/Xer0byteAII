@@ -83,9 +83,13 @@ const authenticateToken = (req: any, res: any, next: any) => {
 
 // Gemini Setup
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY || "");
-const model = genAI.getGenerativeModel({ 
-  model: "gemini-1.5-flash",
+const chatModel = genAI.getGenerativeModel({ 
+  model: "gemini-3-flash-preview",
   systemInstruction: "You are Grok by xAI: helpful, witty, truthful, maximum truth-seeking AI built by xAI."
+});
+
+const imageModel = genAI.getGenerativeModel({
+  model: "gemini-2.5-flash-image"
 });
 
 // Auth Routes
@@ -143,12 +147,12 @@ app.post("/api/chat", authenticateToken, async (req: any, res) => {
     await Conversation.findByIdAndUpdate(conversationId, { updatedAt: new Date() });
 
     // Format history for Gemini
-    const chatHistory = history.map((msg: any) => ({
+    const chatHistory = (history || []).map((msg: any) => ({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.text }]
     }));
 
-    const chat = model.startChat({ history: chatHistory });
+    const chat = chatModel.startChat({ history: chatHistory });
     const result = await chat.sendMessage(text);
     const aiText = result.response.text();
 
@@ -168,25 +172,21 @@ app.post("/api/generate-image", authenticateToken, async (req, res) => {
     const { prompt } = req.body;
     if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-    const imageModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Or a specific image model if available
-    // Note: Gemini 1.5 Flash doesn't natively generate images like DALL-E, 
-    // but the user's original code used gemini-2.5-flash-image.
-    // I will use the model name they provided.
-    const modelForImage = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+    const result = await imageModel.generateContent(prompt);
+    const parts = result.response.candidates?.[0]?.content?.parts;
     
-    // Actually, for image generation in Gemini, it's usually a different flow or model.
-    // If the user's original code worked with gemini-2.5-flash-image, I'll try to replicate.
-    // However, standard @google/generative-ai might not support 'gemini-2.5-flash-image' directly if it's a preview.
-    // I'll stick to the user's intent.
+    if (parts) {
+      for (const part of parts) {
+        if (part.inlineData) {
+          const imageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+          return res.json({ imageUrl });
+        }
+      }
+    }
     
-    const result = await modelForImage.generateContent(prompt);
-    // This is a placeholder as Gemini 1.5 Flash is text-to-text.
-    // If the user wants real image generation, they'd use Imagen or similar.
-    // For now, I'll just return a mock or error if it's not supported, 
-    // but I'll try to follow their original logic structure.
-    
-    res.status(501).json({ error: "Image generation not yet implemented on backend with this model." });
+    res.status(500).json({ error: "No image generated in response" });
   } catch (error) {
+    console.error("Image generation error:", error);
     res.status(500).json({ error: "Image generation failed" });
   }
 });

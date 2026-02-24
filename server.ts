@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import path from "path";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
@@ -93,15 +93,7 @@ const authenticateToken = (req: any, res: any, next: any) => {
 };
 
 // Gemini Setup
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY || "");
-const chatModel = genAI.getGenerativeModel({ 
-  model: "gemini-3-flash-preview",
-  systemInstruction: "You are Grok by xAI: helpful, witty, truthful, maximum truth-seeking AI built by xAI."
-});
-
-const imageModel = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash-image"
-});
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || "" });
 
 // Auth Routes
 app.post("/api/auth/signup", async (req, res) => {
@@ -158,13 +150,11 @@ app.post("/api/chat", authenticateToken, async (req: any, res) => {
     await Conversation.findByIdAndUpdate(conversationId, { updatedAt: new Date() });
 
     // Format history for Gemini
-    const chatHistory = (history || []).map((msg: any) => ({
+    const rawContents = (history || []).map((msg: any) => ({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.text }]
     }));
 
-    const chat = chatModel.startChat({ history: chatHistory });
-    
     const parts: any[] = [];
     if (text) parts.push({ text });
     if (image) {
@@ -175,9 +165,33 @@ app.post("/api/chat", authenticateToken, async (req: any, res) => {
         }
       });
     }
+    rawContents.push({ role: 'user', parts });
 
-    const result = await chat.sendMessage(parts);
-    const aiText = result.response.text();
+    // Sanitize contents to ensure alternating roles
+    const contents: any[] = [];
+    for (const msg of rawContents) {
+      if (contents.length === 0) {
+        if (msg.role === 'user') contents.push(msg);
+      } else {
+        const lastMsg = contents[contents.length - 1];
+        if (lastMsg.role === msg.role) {
+          // Merge parts if same role
+          lastMsg.parts.push(...msg.parts);
+        } else {
+          contents.push(msg);
+        }
+      }
+    }
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: contents,
+      config: {
+        systemInstruction: "You are Grok by xAI: helpful, witty, truthful, maximum truth-seeking AI built by xAI."
+      }
+    });
+    
+    const aiText = response.text || "";
 
     // Save AI message
     const aiMsg = new Message({ conversationId, userId, role: 'ai', text: aiText });
@@ -195,8 +209,14 @@ app.post("/api/generate-image", authenticateToken, async (req, res) => {
     const { prompt } = req.body;
     if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-    const result = await imageModel.generateContent(prompt);
-    const parts = result.response.candidates?.[0]?.content?.parts;
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+    });
+    
+    const parts = response.candidates?.[0]?.content?.parts;
     
     if (parts) {
       for (const part of parts) {

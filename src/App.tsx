@@ -205,7 +205,15 @@ export default function App() {
       ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       ...options.headers
     };
-    return fetch(url, { ...options, headers });
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 401 || response.status === 403) {
+      setUser(null);
+      setToken(null);
+      localStorage.removeItem('grokUser');
+      localStorage.removeItem('grokToken');
+      setModals(prev => ({ ...prev, signIn: true }));
+    }
+    return response;
   };
 
   useEffect(() => {
@@ -280,6 +288,11 @@ export default function App() {
   const handleSend = async (text: string = inputText) => {
     if (!text.trim() && !selectedFile) return;
     
+    if (!user || !token) {
+      setModals(prev => ({ ...prev, signIn: true }));
+      return;
+    }
+
     if (view !== 'chat') {
       setView('chat');
     }
@@ -287,7 +300,7 @@ export default function App() {
     let activeConvId = currentConversationId;
     
     // Create new conversation if none exists
-    if (!activeConvId && user) {
+    if (!activeConvId) {
       try {
         const res = await apiFetch('/api/conversations', {
           method: 'POST',
@@ -321,7 +334,6 @@ export default function App() {
         })
       });
 
-      
       const data = await response.json();
       if (response.ok) {
         const aiMsg = { role: 'ai' as const, text: data.text };
@@ -339,6 +351,10 @@ export default function App() {
 
   const handleGenerateImage = async () => {
     if (!inputText.trim()) return;
+    if (!user || !token) {
+      setModals(prev => ({ ...prev, signIn: true }));
+      return;
+    }
     setIsGeneratingImage(true);
     setGeneratedImage(null);
     try {
